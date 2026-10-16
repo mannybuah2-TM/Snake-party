@@ -79,6 +79,7 @@ input{font:inherit;font-weight:700;color:var(--ink);background:var(--stage);bord
 .pad button{padding:0;font-size:22px;border-radius:12px;touch-action:manipulation;user-select:none;-webkit-user-select:none}
 .pad .lab{grid-column:2;grid-row:2;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
 .pad .u{grid-column:2;grid-row:1}.pad .l{grid-column:1;grid-row:2}.pad .r{grid-column:3;grid-row:2}.pad .d{grid-column:2;grid-row:3}
+.sublabel{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:-6px}
 .tip{font-size:12px;color:var(--muted);margin:0;line-height:1.5}
 @media (max-width:640px){.scores{grid-template-columns:repeat(2,minmax(0,1fr))}.score .sub{display:none}}
 @media (prefers-reduced-motion:reduce){body{transition:none}}
@@ -120,10 +121,18 @@ input{font:inherit;font-weight:700;color:var(--ink);background:var(--stage);bord
             <button type="button" data-n="3">3</button>
             <button type="button" data-n="4">4</button>
           </div>
+          <div class="sublabel">Round length</div>
           <div class="row" id="localLen">
             <button type="button" data-t="60">1 min</button>
             <button type="button" data-t="120" class="on">2 min</button>
             <button type="button" data-t="180">3 min</button>
+          </div>
+          <div class="sublabel">Speed</div>
+          <div class="row" id="localSpeed">
+            <button type="button" data-s="180">Slow</button>
+            <button type="button" data-s="120" class="on">Normal</button>
+            <button type="button" data-s="85">Fast</button>
+            <button type="button" data-s="60">Turbo</button>
           </div>
           <button type="button" class="go" id="startLocal">Start game</button>
         </div>
@@ -159,7 +168,8 @@ input{font:inherit;font-weight:700;color:var(--ink);background:var(--stage);bord
 <script>
 (function(){
 'use strict';
-const COLS=30, ROWS=20, CELL=30, TICK=120, MAXLEN=110;
+const COLS=30, ROWS=20, CELL=30, MAXLEN=110;
+const SPEEDS=[[180,'Slow'],[120,'Normal'],[85,'Fast'],[60,'Turbo']];
 const A='0123456789abcdefghijklmnopqrstuvwxyz';
 const ID_PREFIX='family-snake-party-';
 const PEER_OPTS={config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]}};
@@ -201,8 +211,8 @@ const cleanName=s=>(typeof s==='string'?s:'').replace(/[\u0000-\u001f\u007f]/g,'
 
 /* ================= Game engine (runs on the host device, or locally) ================= */
 let E=null;
-function newEngine(players,roundLen){
-  const e={st:Date.now(),ph:'play',time:roundLen,rl:roundLen,th:Math.floor(Math.random()*THEMES.length),
+function newEngine(players,roundLen,tick){
+  const e={st:Date.now(),ph:'play',time:roundLen,rl:roundLen,tick:tick||120,th:Math.floor(Math.random()*THEMES.length),
     players:players.map(p=>({id:p.id,name:p.name})),fruits:[],snakes:[]};
   e.snakes=players.map((p,i)=>makeSnake(i));
   E=e; while(e.fruits.length<players.length+2) spawnFruit(e);
@@ -295,7 +305,9 @@ function decode(g){
 let mode='online';
 let view=null, prevView=null, particles=[];
 let acc=0,last=performance.now(),paused=false;
-let localCount=2,localLen=120,onlineLen=120;
+let localCount=2,localLen=120,onlineLen=120,localSpeed=120,onlineSpeed=120;
+try{const sp=+localStorage.getItem('snake-speed');if(SPEEDS.some(x=>x[0]===sp)){localSpeed=sp;onlineSpeed=sp;}}catch(e){}
+function saveSpeed(v){try{localStorage.setItem('snake-speed',String(v));}catch(e){}}
 let dismissedSt=0;
 /* net: {role:'host'|'client', peer, code, myId, state, conns(Map), lobby:[{id,name}], hostConn, error} */
 let net=null;
@@ -519,7 +531,7 @@ function netFail(msg){if(net){try{net.peer.destroy();}catch(e){}}net={role:'none
 function startOnline(){
   if(!net||net.role!=='host'||net.state!=='lobby')return;
   const players=net.lobby.slice(0,4);
-  newEngine(players,onlineLen);acc=0;prevView=null;
+  newEngine(players,onlineLen,onlineSpeed);acc=0;prevView=null;
   broadcast({t:'g',g:encode(E)});
   setView(decode(encode(E)));showOverlay(false);updateBar();
 }
@@ -533,6 +545,12 @@ function lenButtons(){
   const row=el('div','row');
   [[60,'1 min'],[120,'2 min'],[180,'3 min']].forEach(([t,l])=>{const b=el('button',onlineLen===t?'on':'',l);b.type='button';
     b.onclick=()=>{onlineLen=t;renderTimer();renderOnline();};row.appendChild(b);});
+  return row;
+}
+function speedButtons(){
+  const row=el('div','row');
+  SPEEDS.forEach(([t,l])=>{const b=el('button',onlineSpeed===t?'on':'',l);b.type='button';
+    b.onclick=()=>{onlineSpeed=t;saveSpeed(t);renderOnline();};row.appendChild(b);});
   return row;
 }
 function renderOnline(){
@@ -573,7 +591,7 @@ function renderOnline(){
     if(navigator.share){const sh=el('button',null,'Share…');sh.type='button';sh.onclick=()=>navigator.share({title:'Family Snake Party',text:'Come and play snake with me!',url:inviteLink()}).catch(()=>{});add(sh);}
     const ppl=el('div','people');
     net.lobby.forEach((p,k)=>ppl.appendChild(personRow(p.name+(p.id===net.myId?' (you, host)':''),k,k<4?'Playing':'Watching',k<4)));
-    add(ppl,lenButtons());
+    add(ppl,el('div','sublabel','Round length'),lenButtons(),el('div','sublabel','Speed'),speedButtons());
     const running=E&&E.ph==='play';
     const st=goBtn(running?'Game in progress':'Start game ('+Math.min(4,net.lobby.length)+' player'+(Math.min(4,net.lobby.length)===1?'':'s')+')',startOnline);
     st.disabled=!!running;add(st);
@@ -596,7 +614,7 @@ function renderOnline(){
 /* ================= Local mode ================= */
 function startLocal(){
   const players=[];for(let i=0;i<localCount;i++)players.push({id:'local'+i,name:'Player '+(i+1)});
-  newEngine(players,localLen);paused=false;acc=0;prevView=null;
+  newEngine(players,localLen,localSpeed);paused=false;acc=0;prevView=null;
   setView(decode(encode(E)));showOverlay(false);buildPads();updateBar();
 }
 function togglePause(){paused=!paused;$('pauseBtn').textContent=paused?'Resume':'Pause';$('status').textContent=paused?'Paused':'';}
@@ -653,6 +671,8 @@ $('nick').addEventListener('input',()=>{nick=cleanName($('nick').value);try{loca
 function bindGroup(id,attr,fn){const btns=$(id).querySelectorAll('button');btns.forEach(b=>b.onclick=()=>{btns.forEach(x=>x.classList.toggle('on',x===b));fn(+b.dataset[attr]);});}
 bindGroup('localCount','n',n=>{localCount=n;});
 bindGroup('localLen','t',t=>{localLen=t;renderTimer();});
+bindGroup('localSpeed','s',v=>{localSpeed=v;saveSpeed(v);});
+$('localSpeed').querySelectorAll('button').forEach(b=>b.classList.toggle('on',+b.dataset.s===localSpeed));
 window.addEventListener('beforeunload',()=>{if(net&&net.peer){try{net.peer.destroy();}catch(e){}}});
 
 /* ================= Main loop ================= */
@@ -661,7 +681,7 @@ function loop(now){
   const hosting=mode==='online'&&net&&net.role==='host';
   if(E&&E.ph==='play'&&((mode==='local'&&!paused)||hosting)){
     acc+=dt;let stepped=false;
-    while(acc>=TICK){engineStep(E);acc-=TICK;stepped=true;}
+    while(acc>=E.tick){engineStep(E);acc-=E.tick;stepped=true;}
     E.time-=dt/1000;
     if(E.time<=0)finish();
     else if(stepped){const g=encode(E);setView(decode(g));if(hosting)broadcast({t:'g',g});}
